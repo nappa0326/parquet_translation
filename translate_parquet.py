@@ -8,11 +8,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Parquetファイルの読み込み
 df = pd.read_parquet('train-00000-of-00002-6f3344faa23e9b0a.parquet')
 
-# デバッグ用にdfの最初の5行だけ残して後は削除
-df = df.head(100)
+# デバッグ用にdfの最初の10行だけ残して後は削除
+#df = df.head(10)
 
 # デバッグ用にCSVファイルとして出力
-df.to_csv('dataset_debug.csv', index=False)
+#df.to_csv('dataset_debug.csv', index=False)
 
 # モデルとトークナイザーの準備
 model_name = "facebook/mbart-large-50-one-to-many-mmt"
@@ -130,7 +130,7 @@ def translate_conversations(conversations):
 df['conversations'] = df['conversations'].apply(translate_conversations)
 
 # デバッグ用にCSVファイルとして出力
-# df.to_csv('translated_dataset_debug.csv', index=False)
+#df.to_csv('translated_dataset_debug.csv', index=False)
 
 # 翻訳結果をParquetファイルに保存
 df.to_parquet('translated_dataset.parquet')
