@@ -1,3 +1,6 @@
+import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # Set environment variable for debugging
+
 import torch
 import pandas as pd
 from transformers import MBartForConditionalGeneration, MBart50TokenizerFast
@@ -28,7 +31,8 @@ tokenizer.src_lang = "en_XX"
 
 def translate_text(text, target_lang="ja_XX"):
     # テキストをトークナイズ
-    model_inputs = tokenizer(text, return_tensors="pt")
+    # Add truncation and padding to handle long sequences
+    model_inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
 
     # 入力をGPUに移動
     model_inputs = model_inputs.to(device)
