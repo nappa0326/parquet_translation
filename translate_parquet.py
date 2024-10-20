@@ -49,6 +49,9 @@ def translate_single_sentence(sentence, target_lang="ja_XX"):
     # キャッシュに保存
     translation_cache[sentence] = translated_sentence
     print(f"Translated: {translated_sentence}")
+
+    # キャッシュを定期的に保存
+    save_translation_cache()
     return translated_sentence
 
 
@@ -67,6 +70,7 @@ def translate_text(text, target_lang="ja_XX"):
     sentences = re.split(r'([.,!?])', text)
 
     translated_sentences = []
+    current_segment = ""
 
     for i in range(0, len(sentences), 2):  # 文と区切り文字をセットで処理
         # 文章が空の場合をスキップ
@@ -74,42 +78,28 @@ def translate_text(text, target_lang="ja_XX"):
             continue
 
         sentence = sentences[i].strip()  # 余分な空白を削除
-        translated_sentence = sentence  # 初期値は元の文
 
-        # 文章のトークン数を再チェックして長い場合はさらに分割
-        model_inputs = tokenizer(sentence, return_tensors="pt", padding=True, truncation=False)
+        # 現在のセグメントに追加していく
+        current_segment += sentence
+
+        # 次の区切り文字があれば、それもセグメントに追加
+        if i + 1 < len(sentences):
+            current_segment += sentences[i + 1].strip()
+
+        # セグメントのトークン数を確認
+        model_inputs = tokenizer(current_segment, return_tensors="pt", padding=True, truncation=False)
         token_length = model_inputs.input_ids.shape[1]
 
-        # 512トークン以上の文を区切って翻訳
+        # 512トークンを超えた場合は前のセグメントまで翻訳
         if token_length > 512:
-            # 512トークンを超える文を再帰的に分割して翻訳
-            translated_sentence = translate_text(sentence, target_lang)
-        else:
-            # 512トークン以内の文はそのまま翻訳
-            translated_sentence = translate_single_sentence(sentence, target_lang)
+            translated_sentence = translate_single_sentence(current_segment.strip(), target_lang)
+            translated_sentences.append(translated_sentence)
+            current_segment = ""  # セグメントをリセット
 
+    # 最後に残ったセグメントがあれば翻訳
+    if current_segment:
+        translated_sentence = translate_single_sentence(current_segment.strip(), target_lang)
         translated_sentences.append(translated_sentence)
-
-        # 区切り文字が存在する場合、それも追加
-        if i + 1 < len(sentences):
-            # 区切り文字を取得
-            separator = sentences[i + 1].strip()
-
-            # 区切り文字がピリオドの場合は句点を追加
-            if separator == '.':
-                translated_sentences.append('。')
-            # 区切り文字がカンマの場合は読点を追加
-            elif separator == ',':
-                translated_sentences.append('、')
-            # 区切り文字がエクスクラメーションマークの場合は感嘆符を追加
-            elif separator == '!':
-                translated_sentences.append('！')
-            # 区切り文字がクエスチョンマークの場合は疑問符を追加
-            elif separator == '?':
-                translated_sentences.append('？')
-            # 区切り文字がその他の場合はそのまま追加
-            else:
-                translated_sentences.append(sentences[i + 1])
 
     # 翻訳結果を結合して最終テキストにする
     translated_text = ''.join(translated_sentences).strip()
@@ -214,8 +204,18 @@ def process_chunk(df_chunk, start_index):
 
 # キャッシュの定期的な保存関数
 def save_translation_cache():
+    global cached_text_num
+
+    # 保存されているキャッシュされた翻訳結果数が100行以上増えた場合に保存
+    if len(translation_cache) - cached_text_num < 100:
+        return
+
+    # キャッシュをデータフレームに変換して保存
     cache_df = pd.DataFrame(list(translation_cache.items()), columns=['text', 'translated_text'])
     cache_df.to_csv(cache_file, index=False)
+
+    # 保存されているキャッシュされた翻訳結果数を更新
+    cached_text_num = len(translation_cache)
 
 
 # メイン処理
@@ -226,22 +226,20 @@ def process_data_in_chunks(df, chunk_size):
         df_chunk = df.iloc[start_index:end_index]
         process_chunk(df_chunk, start_index)
 
-        # キャッシュを定期的に保存
-        save_translation_cache()
-
 
 # Parquetファイル
 parquet_file = 'train-00000-of-00002-6f3344faa23e9b0a.parquet'
 
 # Parquetファイルの読み込み
 df = pd.read_parquet(parquet_file)
+print(f"Total rows: {len(df)}")
 
-# チャンクサイズを100行に設定
-#chunk_size = 100
+# チャンクサイズを1000行に設定
+chunk_size = 1000
 
 # 最初の25行に制限しチャンクサイズを10行に設定(テスト用)
-df = df.head(25)
-chunk_size = 10
+#df = df.head(25)
+#chunk_size = 10
 
 # 翻訳結果のキャッシュファイル
 cache_file = 'translation_cache.csv'
@@ -251,6 +249,9 @@ if os.path.exists(cache_file):
     translation_cache = pd.read_csv(cache_file).set_index('text')['translated_text'].to_dict()
 else:
     translation_cache = {}
+
+# キャッシュされている翻訳結果数を保存
+cached_text_num = len(translation_cache)
 
 # データを指定行数ずつ処理
 process_data_in_chunks(df, chunk_size)
