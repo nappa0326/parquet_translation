@@ -1,21 +1,13 @@
 import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # Set environment variable for debugging
-
 import torch
 import pandas as pd
 from transformers import MBartForConditionalGeneration, MBart50TokenizerFast
+import re
+
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # Set environment variable for debugging
 
 # デバイスの設定
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Parquetファイルの読み込み
-df = pd.read_parquet('train-00000-of-00002-6f3344faa23e9b0a.parquet')
-
-# デバッグ用にdfの最初の10行だけ残して後は削除
-#df = df.head(10)
-
-# デバッグ用にCSVファイルとして出力
-#df.to_csv('dataset_debug.csv', index=False)
 
 # モデルとトークナイザーの準備
 model_name = "facebook/mbart-large-50-one-to-many-mmt"
@@ -29,10 +21,16 @@ model.to(device)
 tokenizer.src_lang = "en_XX"
 
 
-def translate_text(text, target_lang="ja_XX"):
+# 単一の文を翻訳
+def translate_single_sentence(sentence, target_lang="ja_XX"):
+    # キャッシュに存在する場合は再利用
+    if sentence in translation_cache:
+        cached_text = translation_cache[sentence]
+        print(f"Cache hit: {cached_text}")
+        return cached_text
+
     # テキストをトークナイズ
-    # Add truncation and padding to handle long sequences
-    model_inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    model_inputs = tokenizer(sentence, return_tensors="pt", padding=True, truncation=True, max_length=512)
 
     # 入力をGPUに移動
     model_inputs = model_inputs.to(device)
@@ -41,12 +39,80 @@ def translate_text(text, target_lang="ja_XX"):
     generated_tokens = model.generate(
         **model_inputs,
         forced_bos_token_id=tokenizer.lang_code_to_id[target_lang],
-        num_beams=3,  # ビームサーチの幅を設定
+        num_beams=3,
         early_stopping=True
     )
+
     # 翻訳結果をデコード
-    translated_text = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
-    print(f"Translated text: {translated_text}")
+    translated_sentence = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+
+    # キャッシュに保存
+    translation_cache[sentence] = translated_sentence
+    print(f"Translated: {translated_sentence}")
+    return translated_sentence
+
+
+# テキストを翻訳
+def translate_text(text, target_lang="ja_XX"):
+    # テキストのトークン数を確認
+    model_inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=False)
+    token_length = model_inputs.input_ids.shape[1]
+
+    # テキストが512トークン以内の場合はそのまま翻訳
+    if token_length <= 512:
+        translated_text = translate_single_sentence(text, target_lang)
+        return translated_text
+
+    # テキストを区切り文字で分割（.,!?）
+    sentences = re.split(r'([.,!?])', text)
+
+    translated_sentences = []
+
+    for i in range(0, len(sentences), 2):  # 文と区切り文字をセットで処理
+        # 文章が空の場合をスキップ
+        if not sentences[i].strip():
+            continue
+
+        sentence = sentences[i].strip()  # 余分な空白を削除
+        translated_sentence = sentence  # 初期値は元の文
+
+        # 文章のトークン数を再チェックして長い場合はさらに分割
+        model_inputs = tokenizer(sentence, return_tensors="pt", padding=True, truncation=False)
+        token_length = model_inputs.input_ids.shape[1]
+
+        # 512トークン以上の文を区切って翻訳
+        if token_length > 512:
+            # 512トークンを超える文を再帰的に分割して翻訳
+            translated_sentence = translate_text(sentence, target_lang)
+        else:
+            # 512トークン以内の文はそのまま翻訳
+            translated_sentence = translate_single_sentence(sentence, target_lang)
+
+        translated_sentences.append(translated_sentence)
+
+        # 区切り文字が存在する場合、それも追加
+        if i + 1 < len(sentences):
+            # 区切り文字を取得
+            separator = sentences[i + 1].strip()
+
+            # 区切り文字がピリオドの場合は句点を追加
+            if separator == '.':
+                translated_sentences.append('。')
+            # 区切り文字がカンマの場合は読点を追加
+            elif separator == ',':
+                translated_sentences.append('、')
+            # 区切り文字がエクスクラメーションマークの場合は感嘆符を追加
+            elif separator == '!':
+                translated_sentences.append('！')
+            # 区切り文字がクエスチョンマークの場合は疑問符を追加
+            elif separator == '?':
+                translated_sentences.append('？')
+            # 区切り文字がその他の場合はそのまま追加
+            else:
+                translated_sentences.append(sentences[i + 1])
+
+    # 翻訳結果を結合して最終テキストにする
+    translated_text = ''.join(translated_sentences).strip()
     return translated_text
 
 
@@ -107,18 +173,12 @@ def translate_chat(chat):
     return chat_org
 
 
-df['chat'] = df['chat'].apply(translate_chat)
-
-
 # system列の翻訳
 def translate_system(system):
     system_part = system.split('SYSTEM:')[1].split(' -')[0].strip()
     system_translated = translate_text(system_part)
     system = system.replace(system_part, system_translated)
     return system
-
-
-df['system'] = df['system'].apply(translate_system)
 
 
 # conversations列の翻訳
@@ -131,10 +191,77 @@ def translate_conversations(conversations):
     return conversations
 
 
-df['conversations'] = df['conversations'].apply(translate_conversations)
+# 分割処理関数
+def process_chunk(df_chunk, start_index):
+    # このチャンクがすでに処理済みの場合はスキップ
+    if os.path.exists(f'translated_chunk_{start_index}.parquet'):
+        return
 
-# デバッグ用にCSVファイルとして出力
-#df.to_csv('translated_dataset_debug.csv', index=False)
+    # chat列の翻訳
+    df_chunk.loc[:, 'chat'] = df_chunk['chat'].apply(translate_chat)
 
-# 翻訳結果をParquetファイルに保存
-df.to_parquet('translated_dataset.parquet')
+    # system列の翻訳
+    df_chunk.loc[:, 'system'] = df_chunk['system'].apply(translate_system)
+
+    # conversations列の翻訳
+    df_chunk.loc[:, 'conversations'] = df_chunk['conversations'].apply(translate_conversations)
+
+    # 翻訳結果を保存
+    output_file = f'translated_chunk_{start_index}.parquet'
+    df_chunk.to_parquet(output_file)
+    print(f"Saved: {output_file}")
+
+
+# キャッシュの定期的な保存関数
+def save_translation_cache():
+    cache_df = pd.DataFrame(list(translation_cache.items()), columns=['text', 'translated_text'])
+    cache_df.to_csv(cache_file, index=False)
+
+
+# メイン処理
+def process_data_in_chunks(df, chunk_size):
+    total_rows = len(df)
+    for start_index in range(0, total_rows, chunk_size):
+        end_index = min(start_index + chunk_size, total_rows)
+        df_chunk = df.iloc[start_index:end_index]
+        process_chunk(df_chunk, start_index)
+
+        # キャッシュを定期的に保存
+        save_translation_cache()
+
+
+# Parquetファイル
+parquet_file = 'train-00000-of-00002-6f3344faa23e9b0a.parquet'
+
+# Parquetファイルの読み込み
+df = pd.read_parquet(parquet_file)
+
+# チャンクサイズを100行に設定
+#chunk_size = 100
+
+# 最初の25行に制限しチャンクサイズを10行に設定(テスト用)
+df = df.head(25)
+chunk_size = 10
+
+# 翻訳結果のキャッシュファイル
+cache_file = 'translation_cache.csv'
+
+# 翻訳結果のキャッシュファイルの読み込み
+if os.path.exists(cache_file):
+    translation_cache = pd.read_csv(cache_file).set_index('text')['translated_text'].to_dict()
+else:
+    translation_cache = {}
+
+# データを指定行数ずつ処理
+process_data_in_chunks(df, chunk_size)
+
+# 最終的にキャッシュを保存
+save_translation_cache()
+
+# 全ての翻訳結果を結合
+translated_files = [f'translated_chunk_{i}.parquet' for i in range(0, len(df), 100)]
+translated_df = pd.concat([pd.read_parquet(file) for file in translated_files], ignore_index=True)
+
+# 結果を保存(元のファイル名に'_translated'を追加)
+output_file = parquet_file.replace('.parquet', '_translated.parquet')
+translated_df.to_parquet(output_file)
