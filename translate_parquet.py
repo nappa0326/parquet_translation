@@ -204,7 +204,7 @@ def process_chunk(df_chunk, start_index):
 
 # キャッシュの定期的な保存関数
 def save_translation_cache():
-    global cached_text_num
+    global cached_text_num, translation_cache, cache_file_name
 
     # 保存されているキャッシュされた翻訳結果数が100行以上増えた場合に保存
     if len(translation_cache) - cached_text_num < 100:
@@ -212,41 +212,42 @@ def save_translation_cache():
 
     # キャッシュをデータフレームに変換して保存
     cache_df = pd.DataFrame(list(translation_cache.items()), columns=['text', 'translated_text'])
-    cache_df.to_csv(cache_file, index=False)
+    cache_df.to_csv(cache_file_name, index=False)
 
     # 保存されているキャッシュされた翻訳結果数を更新
     cached_text_num = len(translation_cache)
+    print(f"Saved translation cache: {cache_file_name}")
 
 
 # メイン処理
-def process_data_in_chunks(df, chunk_size):
-    total_rows = len(df)
+def process_data_in_chunks(df_base, chunk_size):
+    total_rows = len(df_base)
     for start_index in range(0, total_rows, chunk_size):
         end_index = min(start_index + chunk_size, total_rows)
-        df_chunk = df.iloc[start_index:end_index]
+        df_chunk = df_base.iloc[start_index:end_index]
         process_chunk(df_chunk, start_index)
 
 
 # Parquetファイル
-parquet_file = 'train-00000-of-00002-6f3344faa23e9b0a.parquet'
+parquet_file_name = 'train-00000-of-00002-6f3344faa23e9b0a.parquet'
 
 # Parquetファイルの読み込み
-df = pd.read_parquet(parquet_file)
+df = pd.read_parquet(parquet_file_name)
 print(f"Total rows: {len(df)}")
 
 # チャンクサイズを1000行に設定
-chunk_size = 1000
+chunk_size_default = 1000
 
 # 最初の25行に制限しチャンクサイズを10行に設定(テスト用)
 #df = df.head(25)
-#chunk_size = 10
+#chunk_size_default = 10
 
 # 翻訳結果のキャッシュファイル
-cache_file = 'translation_cache.csv'
+cache_file_name = 'translation_cache.csv'
 
 # 翻訳結果のキャッシュファイルの読み込み
-if os.path.exists(cache_file):
-    translation_cache = pd.read_csv(cache_file).set_index('text')['translated_text'].to_dict()
+if os.path.exists(cache_file_name):
+    translation_cache = pd.read_csv(cache_file_name).set_index('text')['translated_text'].to_dict()
 else:
     translation_cache = {}
 
@@ -254,7 +255,7 @@ else:
 cached_text_num = len(translation_cache)
 
 # データを指定行数ずつ処理
-process_data_in_chunks(df, chunk_size)
+process_data_in_chunks(df, chunk_size_default)
 
 # 最終的にキャッシュを保存
 save_translation_cache()
@@ -264,5 +265,5 @@ translated_files = [f'translated_chunk_{i}.parquet' for i in range(0, len(df), 1
 translated_df = pd.concat([pd.read_parquet(file) for file in translated_files], ignore_index=True)
 
 # 結果を保存(元のファイル名に'_translated'を追加)
-output_file = parquet_file.replace('.parquet', '_translated.parquet')
-translated_df.to_parquet(output_file)
+output_file_name = parquet_file_name.replace('.parquet', '_translated.parquet')
+translated_df.to_parquet(output_file_name)
