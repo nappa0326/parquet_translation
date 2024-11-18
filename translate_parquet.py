@@ -397,7 +397,7 @@ process_data_in_chunks(df, chunk_size_default)
 save_translation_cache(force=True)
 
 # 全ての翻訳結果を結合
-translated_files = [f'translated_chunk_{i}.parquet' for i in range(0, len(df), 100)]
+translated_files = [f'translated_chunk_{i}.parquet' for i in range(0, len(df), chunk_size_default)]
 translated_df = pd.concat([pd.read_parquet(file) for file in translated_files], ignore_index=True)
 
 # 結果を保存(元のファイル名に'_translated'を追加)
