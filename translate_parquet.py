@@ -361,7 +361,7 @@ def process_data_in_chunks(df_base, chunk_size):
 
 
 # Parquetファイル
-parquet_file_name = 'train-00000-of-00002-6f3344faa23e9b0a.parquet'
+parquet_file_name = 'train-00001-of-00002-41f063cddf49c933.parquet'
 
 # Parquetファイルの読み込み
 df = pd.read_parquet(parquet_file_name)
@@ -378,7 +378,7 @@ chunk_size_default = 1000
 cache_file_name = 'translation_cache.csv'
 
 # 翻訳結果のキャッシュファイルを出力するストライドの行数を設定
-# 100行ごとにキャッシュを保存
+# 10行ごとにキャッシュを保存
 cache_save_stride = 10
 
 # 翻訳結果のキャッシュファイルの読み込み
