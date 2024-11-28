@@ -1,6 +1,7 @@
 import os
 import torch
 import pandas as pd
+from PIL._imaging import display
 from transformers import MBartForConditionalGeneration, MBart50TokenizerFast
 import re
 
@@ -297,6 +298,16 @@ def translate_conversations(conversations):
             entry['value'] = translate_text(entry['value'])
         elif entry['from'] == 'gpt' and '<functioncall>' not in entry['value']:
             entry['value'] = translate_text(entry['value'].split('<|endoftext|>')[0]) + '<|endoftext|>'
+        elif entry['from'] == 'system':
+            # ' -'が含まれる場合は' -'までを翻訳
+            # ' -'が含まれない場合は全て翻訳
+            if ' -' in entry['value']:
+                system_part = entry['value'].split(' -')[0].strip()
+                system_translated = translate_text(system_part)
+                entry['value'] = entry['value'].replace(system_part, system_translated)
+            else:
+                entry['value'] = translate_text(entry['value'])
+
     return conversations
 
 
@@ -314,6 +325,10 @@ def process_chunk(df_chunk, start_index):
 
     # conversations列の翻訳
     df_chunk.loc[:, 'conversations'] = df_chunk['conversations'].apply(translate_conversations)
+
+    # デバッグ用に先頭10件を表示
+    #for index, row in df_chunk.head(10).iterrows():
+    #    print(f"{index}: chat: {row['chat']}, system: {row['system']}, conversations: {row['conversations']}")
 
     # 翻訳結果を保存
     output_file = f'translated_chunk_{start_index}.parquet'
