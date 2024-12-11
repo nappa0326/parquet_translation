@@ -156,7 +156,7 @@ def is_code_snippet(text, threshold=3):
 
 def main():
     file_path = 'translation_cache.csv'
-    output_file_name = 'translation_cache.updated.csv'
+    output_file_name = 'translation_cache.csv'
 
     try:
         # csvファイルの内容を読み込む
